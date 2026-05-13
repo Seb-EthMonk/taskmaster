@@ -1,0 +1,1069 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema",
+  "$id": "taskmaster-v3-schema",
+  "title": "TaskMaster v3 — Canonical Schema",
+  "description": "Complete API, data model, WebSocket event, and filesystem schema for TaskMaster v3. Source of truth for agents, clients, and tooling.",
+  "version": "3.0.0",
+
+  "config": {
+    "server": "http://localhost:3000",
+    "heartbeat_interval_seconds": 30,
+    "config_file": "config.json",
+    "projects_dir": "projects/",
+    "archive_dir": "archive/",
+    "agents_dir": "agents/"
+  },
+
+  "enums": {
+    "taskStatus": {
+      "values": ["pending", "in_progress", "done", "blocked", "failed"],
+      "description": "pending=awaiting execution, in_progress=locked and running, done=successfully completed, blocked=dependency or gate failure, failed=execution failed"
+    },
+    "taskPriority": {
+      "values": ["low", "medium", "high", "critical"]
+    },
+    "projectStatus": {
+      "values": ["active", "completed", "archived", "awaiting_approval", "paused"],
+      "description": "active=in progress, completed=all tiers done, archived=moved to archive/, awaiting_approval=waiting for tier gate, paused=workflow paused by user"
+    },
+    "tierNames": {
+      "0": "Discovery",
+      "1": "Strategy",
+      "2": "Architecture",
+      "3": "Execution",
+      "4": "Delivery",
+      "5": "Final",
+      "note": "Tiers 6+ are valid — rendered as 'Tier N'"
+    }
+  },
+
+  "models": {
+    "Task": {
+      "description": "A single unit of work within a project tier",
+      "required": ["id", "title", "description", "status", "priority", "created"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique task identifier. Auto-generated format: task-001, task-002, … Padded to 3 digits.",
+          "example": "task-001"
+        },
+        "title": {
+          "type": "string",
+          "description": "Short human-readable task title"
+        },
+        "description": {
+          "type": "string",
+          "description": "Full task description. May include markdown."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "in_progress", "done", "blocked", "failed"]
+        },
+        "priority": {
+          "type": "string",
+          "enum": ["low", "medium", "high", "critical"]
+        },
+        "tier": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Workflow tier number (0-5+). Defaults to 0 if omitted."
+        },
+        "agent": {
+          "type": "string",
+          "description": "Name of the assigned agent (e.g. AGENT_ARTIST, AGENT_SPEC)",
+          "nullable": true
+        },
+        "created": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp when the task was created"
+        },
+        "started": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp when the task moved to in_progress",
+          "nullable": true
+        },
+        "completed": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp when the task reached done status",
+          "nullable": true
+        },
+        "locked_by": {
+          "type": "string",
+          "description": "Agent name holding the current lock. Null when not locked.",
+          "nullable": true
+        },
+        "locked_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp when the lock was acquired. Null when not locked.",
+          "nullable": true
+        },
+        "reclaim_after": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp after which the lock may be reclaimed. Extended by heartbeat. Null when not locked.",
+          "nullable": true
+        },
+        "heartbeat_interval": {
+          "type": "integer",
+          "description": "Seconds between expected heartbeat signals for this task. Default: 30.",
+          "default": 30
+        },
+        "gate": {
+          "type": "string",
+          "description": "Gate name for tier approval (e.g. 'qa', 'security', 'review'). Null means no gate.",
+          "nullable": true,
+          "examples": ["qa", "security", "review", null]
+        },
+        "depends_on": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Array of task IDs that must have status 'done' before this task can be locked or assigned",
+          "default": []
+        },
+        "requires_human": {
+          "type": "boolean",
+          "description": "If true, blocks lock and assign endpoints until manually cleared to false. Use for tasks needing human review before execution.",
+          "default": false
+        },
+        "last_updated_by": {
+          "type": "string",
+          "description": "Name of the agent or 'system' that last modified this task",
+          "nullable": true
+        },
+        "last_updated_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of the last modification to this task"
+        }
+      }
+    },
+
+    "Project": {
+      "description": "A project loaded from the projects/ directory",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Project directory name, used as slug in all API paths",
+          "example": "tm-notes"
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable project name, parsed from project.md frontmatter"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active", "completed", "archived", "awaiting_approval", "paused"]
+        },
+        "currentTier": {
+          "type": "integer",
+          "description": "Calculated: highest tier where tasks are still pending or in_progress"
+        },
+        "lastAccessed": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Filesystem mtime of the project directory"
+        },
+        "created": {
+          "type": "string",
+          "description": "Project creation date parsed from project.md frontmatter (YYYY-MM-DD or ISO 8601)",
+          "nullable": true
+        },
+        "tasks": {
+          "type": "array",
+          "items": { "$ref": "#/models/Task" },
+          "description": "All tasks loaded from tasks.json"
+        },
+        "completedTiers": {
+          "type": "array",
+          "items": { "type": "integer" },
+          "description": "Tier numbers where every task has status 'done'"
+        },
+        "path": {
+          "type": "string",
+          "description": "Absolute filesystem path to the project directory"
+        },
+        "isArchived": {
+          "type": "boolean",
+          "description": "True if the project lives in archive/ rather than projects/"
+        },
+        "metadata": {
+          "$ref": "#/models/ProjectMetadata"
+        }
+      }
+    },
+
+    "ProjectMetadata": {
+      "description": "Computed task counts for a project",
+      "properties": {
+        "totalTasks": { "type": "integer" },
+        "completedTasks": { "type": "integer" },
+        "inProgressTasks": { "type": "integer" },
+        "pendingTasks": { "type": "integer" },
+        "lastUpdated": { "type": "string", "format": "date-time" }
+      }
+    },
+
+    "TasksJson": {
+      "description": "Schema for the tasks.json file on disk inside each project directory",
+      "properties": {
+        "version": {
+          "type": "string",
+          "description": "Schema version string (optional)",
+          "nullable": true
+        },
+        "project": {
+          "type": "string",
+          "description": "Project name or ID (optional, informational)",
+          "nullable": true
+        },
+        "updated": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Top-level updated timestamp (legacy, prefer metadata.updated)",
+          "nullable": true
+        },
+        "approvedTier": {
+          "type": "integer",
+          "description": "The tier number that has been explicitly approved via manual approval workflow",
+          "nullable": true
+        },
+        "paused": {
+          "type": "boolean",
+          "description": "Whether the workflow is currently paused",
+          "default": false
+        },
+        "tasks": {
+          "type": "array",
+          "items": { "$ref": "#/models/Task" }
+        },
+        "metadata": {
+          "$ref": "#/models/TasksJsonMetadata"
+        }
+      },
+      "required": ["tasks"]
+    },
+
+    "TasksJsonMetadata": {
+      "description": "Metadata block written inside tasks.json. Updated on every write.",
+      "properties": {
+        "totalTasks": { "type": "integer" },
+        "completedTasks": { "type": "integer" },
+        "inProgressTasks": { "type": "integer" },
+        "pendingTasks": { "type": "integer" },
+        "lastUpdated": { "type": "string", "format": "date-time" },
+        "created": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO timestamp when the tasks.json was first created"
+        },
+        "updated": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO timestamp of last write to tasks.json"
+        }
+      }
+    },
+
+    "LockFile": {
+      "description": "Schema for lock files written to projects/{id}/locks/{taskId}.lock",
+      "required": ["taskId", "agent", "pid", "timestamp", "projectId"],
+      "properties": {
+        "taskId": { "type": "string" },
+        "agent": { "type": "string", "description": "Name of the agent holding this lock" },
+        "pid": { "type": "integer", "description": "OS process ID of the agent process" },
+        "timestamp": { "type": "string", "format": "date-time", "description": "When the lock was created" },
+        "projectId": { "type": "string" }
+      }
+    },
+
+    "LLMProviderConfig": {
+      "description": "Configuration for an external LLM provider, stored in user-settings.json and returned by GET /api/settings",
+      "properties": {
+        "id":         { "type": "string", "description": "Provider identifier used in call_llm and modelDefaults (e.g. 'gemini-flash', 'deepseek')" },
+        "name":       { "type": "string", "description": "Human-readable display name" },
+        "baseUrl":    { "type": "string", "description": "OpenAI-compatible API base URL" },
+        "apiKey":     { "type": "string", "description": "API key for the provider" },
+        "model":      { "type": "string", "description": "Model identifier sent in the request body" },
+        "maxTokens":  { "type": "integer", "description": "Maximum tokens for responses" },
+        "timeoutMs":  { "type": "integer", "description": "Request timeout in milliseconds" }
+      }
+    },
+
+    "UserSettings": {
+      "description": "Full user settings object returned by GET /api/settings and written by POST /api/settings",
+      "properties": {
+        "customLinks": {
+          "type": "array",
+          "description": "User-defined shortcut links shown in the UI",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id":     { "type": "string" },
+              "emoji":  { "type": "string" },
+              "name":   { "type": "string" },
+              "type":   { "type": "string", "enum": ["folder", "website", "agent"] },
+              "target": { "type": "string", "description": "Path or URL" }
+            }
+          }
+        },
+        "background": {
+          "type": "object",
+          "properties": {
+            "imagePath": { "type": "string" },
+            "opacity":   { "type": "number", "minimum": 0, "maximum": 1 },
+            "enabled":   { "type": "boolean" }
+          }
+        },
+        "thresholds": {
+          "type": "object",
+          "description": "Task age thresholds in minutes for colour coding in the UI",
+          "properties": {
+            "green":  { "type": "integer", "description": "Minutes before a task turns orange" },
+            "orange": { "type": "integer", "description": "Minutes before a task turns red" }
+          }
+        },
+        "loopModeEnabled": { "type": "boolean" },
+        "providers": {
+          "type": "array",
+          "items": { "$ref": "#/models/LLMProviderConfig" },
+          "description": "Configured LLM providers. Used by call_llm MCP tool and POST /api/settings/test-model."
+        },
+        "modelDefaults": {
+          "type": "object",
+          "description": "Maps task categories to provider IDs. Agents should resolve provider from here rather than hardcoding.",
+          "properties": {
+            "research":  { "type": "string", "description": "Provider ID to use for research tasks" },
+            "coding":    { "type": "string", "description": "Provider ID to use for code generation tasks" },
+            "ingestion": { "type": "string", "description": "Provider ID to use for ingestion/summarisation tasks" }
+          }
+        },
+        "version": { "type": "string" }
+      }
+    },
+
+    "LogEntry": {
+      "description": "A parsed log entry emitted via WebSocket or stored in agent_logs.md",
+      "properties": {
+        "agent": { "type": "string" },
+        "tag": {
+          "type": "string",
+          "enum": ["STARTED", "DECISION", "TIER_COMPLETE", "QUERY", "ERROR", "BLOCKED", "DISCOVERED", "COMPLETED", "INFO"],
+          "description": "Semantic log tag used by AGENT TASKMASTER"
+        },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "context": { "type": "string", "description": "Task ID, tier number, or other context identifier" },
+        "description": { "type": "string" },
+        "raw": { "type": "string", "description": "Original raw log line" }
+      }
+    }
+  },
+
+  "filesystem": {
+    "projectDirectory": {
+      "path": "projects/{projectId}/",
+      "description": "One directory per project, auto-discovered by server on startup",
+      "files": {
+        "project.md": {
+          "required": true,
+          "description": "YAML frontmatter + markdown project documentation",
+          "frontmatter": {
+            "name": { "type": "string", "required": true, "description": "Human-readable project name" },
+            "status": { "type": "string", "enum": ["active", "completed", "archived", "awaiting_approval", "paused"], "required": true },
+            "created": { "type": "string", "format": "date", "description": "YYYY-MM-DD creation date" },
+            "emoji": { "type": "string", "description": "Optional emoji icon for the project UI" },
+            "type": { "type": "string", "description": "Project category (e.g. client-mini-app, internal-tool)" }
+          },
+          "example": "---\nname: TM Notes\nemoji: 📝\nstatus: active\ncreated: 2026-02-24\ntype: client-mini-app\n---\n\n# TM Notes\n\nProject description here..."
+        },
+        "tasks.json": {
+          "required": true,
+          "description": "Task list for this project. See models.TasksJson for schema.",
+          "note": "Do not edit directly while the server is running. Use the REST API."
+        },
+        "agentlogs.md": {
+          "required": false,
+          "description": "Append-only agent execution log. Written by AGENT TASKMASTER using the [AGENT ROLE: TAG] format."
+        },
+        "locks/{taskId}.lock": {
+          "required": false,
+          "description": "Lock file created when a task is claimed. See models.LockFile for schema. Deleted on unlock or task completion."
+        }
+      }
+    },
+    "archiveDirectory": {
+      "path": "archive/{projectId}/",
+      "description": "Projects moved here via POST /api/projects/:id/archive. Same internal structure as projectDirectory."
+    },
+    "agentsDirectory": {
+      "path": "agents/",
+      "files": {
+        "{agentName}.md": {
+          "description": "Agent instruction file with YAML frontmatter",
+          "frontmatter": {
+            "name": { "type": "string" },
+            "description": { "type": "string" },
+            "tools": { "type": "array", "items": { "type": "string" } },
+            "expansion": { "type": "string", "description": "Comma-separated expansion names to load" },
+            "model": { "type": "string", "description": "Optional model override" }
+          }
+        },
+        "expansions/{name}.md": {
+          "description": "Simple single-file expansion. Loaded when agent frontmatter declares expansion: {name}"
+        },
+        "expansions/{name}/{name}.md": {
+          "description": "Complex folder expansion. Main file may reference additional files in the same folder."
+        }
+      }
+    }
+  },
+
+  "api": {
+    "baseUrl": "http://localhost:3000",
+    "contentType": "application/json",
+    "note": "All endpoints return JSON. Error responses always have { error: string, message: string }. Timestamps are ISO 8601.",
+
+    "projects": {
+      "basePath": "/api/projects",
+      "endpoints": {
+        "listProjects": {
+          "method": "GET",
+          "path": "/api/projects",
+          "description": "List all projects in projects/ and archive/ directories",
+          "response": {
+            "200": {
+              "type": "array",
+              "items": "Project",
+              "description": "Array of all projects sorted by lastAccessed descending"
+            },
+            "500": "{ error, message }"
+          }
+        },
+        "getProject": {
+          "method": "GET",
+          "path": "/api/projects/:id",
+          "params": { "id": "projectId string" },
+          "response": {
+            "200": "Project",
+            "404": "{ error, message }",
+            "500": "{ error, message }"
+          }
+        },
+        "createProject": {
+          "method": "POST",
+          "path": "/api/projects",
+          "body": {
+            "name": { "type": "string", "required": true, "description": "Human-readable project name" },
+            "id": { "type": "string", "required": false, "description": "Optional slug override. Auto-generated from name if omitted." }
+          },
+          "response": {
+            "201": "Project",
+            "400": "{ error } — name missing",
+            "409": "{ error } — project ID already exists",
+            "500": "{ error, message }"
+          }
+        },
+        "getProjectLogs": {
+          "method": "GET",
+          "path": "/api/projects/:id/logs",
+          "description": "Read and parse log entries from project.md",
+          "response": {
+            "200": "{ projectId: string, count: number, logs: LogEntry[] }",
+            "404": "{ error }",
+            "500": "{ error }"
+          }
+        },
+        "archiveStatus": {
+          "method": "GET",
+          "path": "/api/projects/:id/archive/status",
+          "response": {
+            "200": "{ projectId, isArchived: boolean, isActive: boolean, canArchive: boolean, canRestore: boolean }",
+            "500": "{ error }"
+          }
+        },
+        "archiveProject": {
+          "method": "POST",
+          "path": "/api/projects/:id/archive",
+          "description": "Move project from projects/ to archive/",
+          "response": {
+            "200": "{ success: true, message, projectId, archivedPath }",
+            "404": "{ error } — not found",
+            "409": "{ error } — already archived",
+            "500": "{ error, message }"
+          }
+        },
+        "restoreProject": {
+          "method": "POST",
+          "path": "/api/projects/:id/restore",
+          "description": "Move project from archive/ back to projects/",
+          "response": {
+            "200": "{ success: true, message, projectId, projectPath }",
+            "404": "{ error } — not in archive",
+            "409": "{ error } — project ID already exists in projects/",
+            "500": "{ error, message }"
+          }
+        },
+        "restoreProjectAsCopy": {
+          "method": "POST",
+          "path": "/api/projects/:id/restore-copy",
+          "description": "Copy project from archive/ to projects/ with a new name",
+          "body": {
+            "name": { "type": "string", "required": true, "description": "New project name for the copy" }
+          },
+          "response": {
+            "200": "{ success: true, message, originalId, newId, newName, projectPath }",
+            "400": "{ error } — name missing",
+            "404": "{ error } — not in archive",
+            "409": "{ error } — new name already taken",
+            "500": "{ error, message }"
+          }
+        }
+      }
+    },
+
+    "tasks": {
+      "basePath": "/api/projects/:projectId/tasks",
+      "note": "All task endpoints require projectId. Cache must be hydrated (503 if not).",
+      "endpoints": {
+        "createTask": {
+          "method": "POST",
+          "path": "/api/projects/:projectId/tasks",
+          "description": "Create a new task. ID is auto-generated as task-NNN (padded to 3 digits, based on current task count).",
+          "body": {
+            "title": { "type": "string", "required": true },
+            "description": { "type": "string", "required": false },
+            "tier": { "type": "integer", "required": false, "default": 0 },
+            "priority": { "type": "string", "enum": ["low", "medium", "high", "critical"], "required": false, "default": "medium" },
+            "agent": { "type": "string", "required": false },
+            "depends_on": { "type": "array", "items": "string", "required": false },
+            "requires_human": { "type": "boolean", "required": false },
+            "gate": { "type": "string", "required": false },
+            "heartbeat_interval": { "type": "integer", "required": false }
+          },
+          "response": {
+            "201": "Task",
+            "400": "{ error } — title missing",
+            "404": "{ error } — project not found",
+            "503": "{ error } — cache not hydrated",
+            "500": "{ error, message }"
+          }
+        },
+        "getActiveLocks": {
+          "method": "GET",
+          "path": "/api/projects/:projectId/tasks/locks",
+          "description": "List all active lock files for a project",
+          "response": {
+            "200": "{ projectId, activeLocks: [{ taskId, agent, timestamp, age, elapsedTime }], totalLocks: number, timestamp }",
+            "404": "{ error } — project not found",
+            "503": "{ error } — cache not hydrated",
+            "500": "{ error, message }"
+          }
+        },
+        "getTask": {
+          "method": "GET",
+          "path": "/api/projects/:projectId/tasks/:taskId",
+          "response": {
+            "200": "Task",
+            "404": "{ error } — project or task not found",
+            "503": "{ error } — cache not hydrated",
+            "500": "{ error, message }"
+          }
+        },
+        "updateTask": {
+          "method": "PATCH",
+          "path": "/api/projects/:projectId/tasks/:taskId",
+          "description": "Update any writable task field. Always sets last_updated_at. Clears locked_by/locked_at/reclaim_after when status transitions to done or failed.",
+          "body": {
+            "agent": { "type": "string", "required": false, "description": "Pass empty string to unassign" },
+            "status": { "type": "string", "enum": ["pending", "in_progress", "done", "blocked", "failed"], "required": false },
+            "priority": { "type": "string", "enum": ["low", "medium", "high", "critical"], "required": false },
+            "title": { "type": "string", "required": false },
+            "description": { "type": "string", "required": false },
+            "depends_on": { "type": "array", "items": "string", "required": false },
+            "gate": { "type": "string", "required": false, "nullable": true },
+            "requires_human": { "type": "boolean", "required": false },
+            "heartbeat_interval": { "type": "integer", "required": false },
+            "updated_by": { "type": "string", "required": false, "description": "Set last_updated_by to this value" }
+          },
+          "response": {
+            "200": "{ success: true, taskId, projectId, task: Task, updates: string[], message, timestamp }",
+            "404": "{ error } — project or task not found",
+            "503": "{ error } — cache not hydrated",
+            "500": "{ error, message }"
+          }
+        },
+        "lockTask": {
+          "method": "PATCH",
+          "path": "/api/projects/:projectId/tasks/:taskId/lock",
+          "description": "Claim a task without spawning a process. Enforces dependency gate and requires_human gate. Sets status to in_progress and writes a lock file.",
+          "body": {
+            "agent": { "type": "string", "required": true, "description": "Agent name claiming the task" },
+            "reclaim_after_minutes": { "type": "integer", "required": false, "default": 15, "description": "Minutes until lock expires if no heartbeat received" }
+          },
+          "response": {
+            "200": "{ success: true, taskId, projectId, task: Task, message, timestamp }",
+            "400": "{ error } — agent missing or task not claimable (status is done/failed/blocked)",
+            "404": "{ error } — project or task not found",
+            "409": "{ error } — dependency not satisfied or requires_human is true",
+            "503": "{ error } — cache not hydrated",
+            "500": "{ error, message }"
+          }
+        },
+        "heartbeat": {
+          "method": "PATCH",
+          "path": "/api/projects/:projectId/tasks/:taskId/heartbeat",
+          "description": "Extend lock expiry by 15 minutes and signal agent is alive. Broadcasts agent:heartbeat WebSocket event.",
+          "body": {
+            "agent": { "type": "string", "required": false, "description": "Agent name (used for broadcast; falls back to locked_by)" }
+          },
+          "response": {
+            "200": "{ success: true, reclaim_after: ISO8601, timestamp: ISO8601 }",
+            "400": "{ error } — task not in_progress",
+            "404": "{ error } — project or task not found",
+            "503": "{ error } — cache not hydrated",
+            "500": "{ error, message }"
+          }
+        },
+        "unlockTask": {
+          "method": "POST",
+          "path": "/api/projects/:projectId/tasks/:taskId/unlock",
+          "description": "Force-unlock a stuck task. Resets status to pending, clears all lock fields, removes lock file.",
+          "body": "none",
+          "response": {
+            "200": "{ success: true, taskId, projectId, lockRemoved: boolean, status: 'pending', message, timestamp }",
+            "400": "{ error } — task not in_progress",
+            "404": "{ error } — project or task not found",
+            "503": "{ error } — cache not hydrated",
+            "500": "{ error, message }"
+          }
+        },
+        "assignTask": {
+          "method": "POST",
+          "path": "/api/projects/:projectId/tasks/:taskId/assign",
+          "description": "Assign agent and immediately spawn a process. Enforces dependency gate and requires_human gate. Sets lock fields after spawning. Use 'General' for a standard agent with no special instructions.",
+          "body": {
+            "agent": { "type": "string", "required": true, "description": "Agent name or 'General'" }
+          },
+          "response": {
+            "202": "{ success: true, pid, agent, projectId, taskId, status: 'in_progress', updates: string[], spawnedAt, message }",
+            "400": "{ error } — agent missing",
+            "404": "{ error } — project or task not found",
+            "409": "{ error } — task done/blocked or dependency not satisfied or requires_human",
+            "503": "{ error } — cache not hydrated",
+            "500": "{ error, message }"
+          }
+        },
+        "executeTask": {
+          "method": "POST",
+          "path": "/api/projects/:projectId/tasks/:taskId/execute",
+          "description": "Trigger task execution via Runtime service (async, returns 202 immediately). Runtime is not currently available — returns 202 but execution is a no-op.",
+          "body": {
+            "agentRole": { "type": "string", "required": false, "description": "Override the agent role for this execution" }
+          },
+          "response": {
+            "202": "{ success: true, executionId, projectId, taskId, status: 'started', message, timestamp }",
+            "400": "{ error } — task already completed or blocked",
+            "404": "{ error } — project or task not found",
+            "503": "{ error } — cache not hydrated",
+            "500": "{ error, message }"
+          }
+        }
+      }
+    },
+
+    "agents": {
+      "basePath": "/api/agents",
+      "endpoints": {
+        "listAgents": {
+          "method": "GET",
+          "path": "/api/agents",
+          "description": "List all available agent .md files from agents/ directory",
+          "response": {
+            "200": "Array of { id, name, description, tools: string[], availableExpansions: string[], allExpansions: string[] }",
+            "500": "{ error }"
+          }
+        },
+        "getAgent": {
+          "method": "GET",
+          "path": "/api/agents/:id",
+          "response": {
+            "200": "Agent object",
+            "404": "{ error }",
+            "500": "{ error }"
+          }
+        },
+        "listExpansions": {
+          "method": "GET",
+          "path": "/api/agents/expansions/all",
+          "response": {
+            "200": "{ count: number, expansions: [{ id, name, description, type: 'file'|'folder' }] }",
+            "500": "{ error }"
+          }
+        },
+        "createAgent": {
+          "method": "POST",
+          "path": "/api/agents",
+          "body": {
+            "name": { "type": "string", "required": true },
+            "description": { "type": "string", "required": false },
+            "systemPrompt": { "type": "string", "required": false },
+            "tools": { "type": "array", "items": "string", "required": false },
+            "expansions": { "type": "array", "items": "string", "required": false },
+            "model": { "type": "string", "required": false }
+          },
+          "response": {
+            "201": "{ success: true, agent, message }",
+            "400": "{ error } — name missing",
+            "409": "{ error } — agent already exists",
+            "500": "{ error }"
+          }
+        },
+        "spawnAgent": {
+          "method": "POST",
+          "path": "/api/agents/:id/spawn",
+          "description": "Spawn an agent process with optional expansion overrides",
+          "body": {
+            "projectPath": { "type": "string", "required": false },
+            "taskId": { "type": "string", "required": false },
+            "projectId": { "type": "string", "required": false },
+            "expansions": { "type": "array", "items": "string", "required": false, "description": "Override expansion list" }
+          },
+          "response": {
+            "201": "{ success: true, pid, agent, spawnedAt, expansions: string[], warnings?: string[], missing?: string[], message }",
+            "404": "{ error } — agent not found",
+            "409": "{ error } — agent already running",
+            "423": "{ error } — missing required expansions",
+            "500": "{ error }"
+          }
+        },
+        "terminateAgent": {
+          "method": "POST",
+          "path": "/api/agents/:pid/terminate",
+          "response": {
+            "200": "{ success: true, pid, agent, message, timestamp }",
+            "404": "{ error } — no agent with that PID",
+            "409": "{ error } — already terminating",
+            "500": "{ error }"
+          }
+        },
+        "pingAgent": {
+          "method": "GET",
+          "path": "/api/agents/:pid/ping",
+          "response": {
+            "200": "{ success: true, pid, agent, status, spawnedAt, uptime, projectId, expansions, terminating: boolean, timestamp }",
+            "400": "{ error } — invalid PID",
+            "404": "{ error } — no agent with that PID",
+            "500": "{ error }"
+          }
+        },
+        "killAgent": {
+          "method": "DELETE",
+          "path": "/api/agents/:pid",
+          "response": {
+            "200": "{ success: true, pid, agent, message }",
+            "404": "{ error }",
+            "500": "{ error }"
+          }
+        },
+        "runningAgents": {
+          "method": "GET",
+          "path": "/api/agents/status/running",
+          "response": {
+            "200": "{ count: number, agents: Agent[] }"
+          }
+        }
+      }
+    },
+
+    "settings": {
+      "basePath": "/api/settings",
+      "note": "Manages user preferences, LLM provider configs, and modelDefaults. Agents should call GET /api/settings to resolve provider IDs before using call_llm.",
+      "endpoints": {
+        "getSettings": {
+          "method": "GET",
+          "path": "/api/settings",
+          "description": "Get full user settings including all providers and modelDefaults",
+          "response": {
+            "200": "{ success: true, settings: UserSettings, timestamp: ISO8601 }",
+            "500": "{ error, message }"
+          }
+        },
+        "saveSettings": {
+          "method": "POST",
+          "path": "/api/settings",
+          "description": "Save (merge) user settings. Partial updates are merged with existing values.",
+          "body": "Partial<UserSettings>",
+          "response": {
+            "200": "{ success: true, settings: UserSettings, timestamp: ISO8601 }",
+            "400": "{ error, message } — validation failure",
+            "500": "{ error, message }"
+          }
+        },
+        "getLinks": {
+          "method": "GET",
+          "path": "/api/settings/links",
+          "response": {
+            "200": "{ success: true, links: CustomLink[], timestamp: ISO8601 }",
+            "500": "{ error, message }"
+          }
+        },
+        "saveLinks": {
+          "method": "POST",
+          "path": "/api/settings/links",
+          "body": "{ links: CustomLink[] }",
+          "response": {
+            "200": "{ success: true, links: CustomLink[], timestamp: ISO8601 }",
+            "400": "{ error, message }",
+            "500": "{ error, message }"
+          }
+        },
+        "getBackground": {
+          "method": "GET",
+          "path": "/api/settings/background",
+          "response": {
+            "200": "{ success: true, background: { imagePath, opacity, enabled }, timestamp: ISO8601 }",
+            "500": "{ error, message }"
+          }
+        },
+        "saveBackground": {
+          "method": "POST",
+          "path": "/api/settings/background",
+          "body": "{ background: { imagePath?, opacity?, enabled? } }",
+          "response": {
+            "200": "{ success: true, background: object, timestamp: ISO8601 }",
+            "400": "{ error, message }",
+            "500": "{ error, message }"
+          }
+        },
+        "testModel": {
+          "method": "POST",
+          "path": "/api/settings/test-model",
+          "description": "Ping an LLM provider with a hello prompt to verify the API key works",
+          "body": "{ providerId: string }",
+          "response": {
+            "200": "{ ok: true, response: string }",
+            "400": "{ ok: false, error: string } — missing providerId or no API key",
+            "404": "{ ok: false, error: string } — provider not found"
+          }
+        }
+      }
+    },
+
+    "logs": {
+      "basePath": "/api/logs",
+      "note": "All log endpoints support optional query params: limit (integer), and log-type-specific filters.",
+      "endpoints": {
+        "allLogs": {
+          "method": "GET",
+          "path": "/api/logs",
+          "queryParams": { "limit": "integer", "action": "string", "project": "string" },
+          "response": { "200": "{ count, stats, filters, logs[] }" }
+        },
+        "logStats": {
+          "method": "GET",
+          "path": "/api/logs/stats",
+          "response": { "200": "{ timestamp, stats }" }
+        },
+        "logsByProject": {
+          "method": "GET",
+          "path": "/api/logs/projects/:projectId",
+          "queryParams": { "limit": "integer" },
+          "response": { "200": "{ projectId, count, logs[] }" }
+        },
+        "agentLogs": {
+          "method": "GET",
+          "path": "/api/logs/agent",
+          "queryParams": { "limit": "integer", "eventType": "string", "agent": "string", "project": "string" },
+          "response": { "200": "{ count, stats, filters, logs[] }" }
+        },
+        "agentLogStats": {
+          "method": "GET",
+          "path": "/api/logs/agent/stats",
+          "response": { "200": "{ timestamp, stats }" }
+        },
+        "agentLogsByProject": {
+          "method": "GET",
+          "path": "/api/logs/agent/projects/:projectId",
+          "queryParams": { "limit": "integer" },
+          "response": { "200": "{ projectId, count, logs[] }" }
+        },
+        "tierLogs": {
+          "method": "GET",
+          "path": "/api/logs/tier",
+          "queryParams": { "limit": "integer", "project": "string", "trigger": "string" },
+          "response": { "200": "{ count, stats, filters, logs[] }" }
+        },
+        "tierLogStats": {
+          "method": "GET",
+          "path": "/api/logs/tier/stats",
+          "response": { "200": "{ timestamp, stats }" }
+        },
+        "tierLogsByProject": {
+          "method": "GET",
+          "path": "/api/logs/tier/projects/:projectId",
+          "queryParams": { "limit": "integer" },
+          "response": { "200": "{ projectId, count, logs[] }" }
+        },
+        "errorLogs": {
+          "method": "GET",
+          "path": "/api/logs/errors",
+          "queryParams": { "limit": "integer", "level": "string", "source": "string", "project": "string" },
+          "response": { "200": "{ count, stats, filters, logs[] }" }
+        },
+        "errorLogStats": {
+          "method": "GET",
+          "path": "/api/logs/errors/stats",
+          "response": { "200": "{ timestamp, stats }" }
+        },
+        "errorLogsByProject": {
+          "method": "GET",
+          "path": "/api/logs/errors/projects/:projectId",
+          "queryParams": { "limit": "integer" },
+          "response": { "200": "{ projectId, count, logs[] }" }
+        },
+        "exportLogs": {
+          "method": "POST",
+          "path": "/api/logs/export",
+          "body": {
+            "format": { "type": "string", "required": false, "description": "Export format" },
+            "type": { "type": "string", "required": false, "description": "Log type to export" },
+            "projectId": { "type": "string", "required": false }
+          },
+          "response": { "200": "{ success, message, export }", "400": "{ error }", "500": "{ error }" }
+        }
+      }
+    }
+  },
+
+  "websocket": {
+    "url": "ws://localhost:3000",
+    "description": "WebSocket connection for real-time updates. All messages are JSON with { type, data, timestamp }.",
+    "note": "Subscribe by connecting. No explicit subscription message needed. Events are broadcast to all connected clients.",
+    "events": {
+      "file:changed": {
+        "direction": "server → client",
+        "data": { "action": "'created'|'modified'|'deleted'", "path": "string", "projectId": "string|null" }
+      },
+      "project:updated": {
+        "direction": "server → client",
+        "data": { "projectId": "string", "action": "'created'|'updated'|'deleted'", "timestamp": "ISO8601" }
+      },
+      "batch:update": {
+        "direction": "server → client",
+        "data": { "fileChanges": "array", "projectUpdates": "array", "batchSize": "number", "timestamp": "ISO8601" }
+      },
+      "tier:complete": {
+        "direction": "server → client",
+        "data": { "projectId": "string", "tier": "number", "completedTaskCount": "number", "timestamp": "ISO8601" }
+      },
+      "tier:awaiting_approval": {
+        "direction": "server → client",
+        "data": { "projectId": "string", "currentTier": "number", "completedTaskCount": "number", "timestamp": "ISO8601" }
+      },
+      "tier:approved": {
+        "direction": "server → client",
+        "data": { "projectId": "string", "previousTier": "number", "newTier": "number", "approvedBy": "string", "timestamp": "ISO8601" }
+      },
+      "agent:heartbeat": {
+        "direction": "server → client",
+        "data": { "pid": "number", "agent": "string", "timestamp": "ISO8601" },
+        "note": "pid may be 0 when broadcast from the /heartbeat endpoint (no spawned process)"
+      },
+      "agent:spawned": {
+        "direction": "server → client",
+        "data": { "pid": "number", "agent": "string", "timestamp": "ISO8601", "projectId": "string|null", "expansions": "string[]" }
+      },
+      "agent:exited": {
+        "direction": "server → client",
+        "data": { "pid": "number", "agent": "string", "exitCode": "number", "timestamp": "ISO8601", "projectId": "string|null" }
+      },
+      "agent:output": {
+        "direction": "server → client",
+        "data": { "pid": "number", "agent": "string", "output": "string", "stream": "'stdout'|'stderr'", "timestamp": "ISO8601", "projectId": "string|null" }
+      },
+      "agent:expansions": {
+        "direction": "server → client",
+        "data": { "pid": "number", "agent": "string", "expansions": "string[]", "count": "number", "timestamp": "ISO8601" }
+      },
+      "expansion:loaded": {
+        "direction": "server → client",
+        "data": { "expansionId": "string", "expansionName": "string", "type": "'file'|'folder'", "action": "'loaded'|'reloaded'|'removed'", "timestamp": "ISO8601" }
+      },
+      "error": {
+        "direction": "server → client",
+        "data": { "message": "string", "code": "string", "details": "object|null", "timestamp": "ISO8601" }
+      },
+      "workflow:paused": {
+        "direction": "server → client",
+        "data": { "projectId": "string", "pausedBy": "string", "timestamp": "ISO8601" }
+      },
+      "workflow:resumed": {
+        "direction": "server → client",
+        "data": { "projectId": "string", "resumedBy": "string", "timestamp": "ISO8601" }
+      },
+      "log:updated": {
+        "direction": "server → client",
+        "data": { "projectId": "string", "logEntry": "LogEntry", "timestamp": "ISO8601" }
+      },
+      "task:started": {
+        "direction": "server → client",
+        "data": { "projectId": "string", "taskId": "string", "agent": "string", "timestamp": "ISO8601" }
+      },
+      "task:progress": {
+        "direction": "server → client",
+        "data": { "projectId": "string", "taskId": "string", "message": "string", "percent": "number|null", "timestamp": "ISO8601" }
+      },
+      "task:completed": {
+        "direction": "server → client",
+        "data": { "projectId": "string", "taskId": "string", "result": "object|null", "timestamp": "ISO8601" },
+        "note": "Emitted on unlock and task completion. Event name is semantic — does not imply task status is 'done'."
+      },
+      "task:error": {
+        "direction": "server → client",
+        "data": { "projectId": "string", "taskId": "string", "error": "string", "timestamp": "ISO8601" }
+      }
+    }
+  },
+
+  "lockMechanism": {
+    "description": "How task locking works in TaskMaster v3",
+    "flow": [
+      "1. Agent calls PATCH /tasks/:taskId/lock with { agent, reclaim_after_minutes }",
+      "2. Server checks: task status must not be done/failed/blocked",
+      "3. Server checks: all depends_on task IDs must have status 'done'",
+      "4. Server checks: requires_human must not be true",
+      "5. Server sets: locked_by, locked_at, reclaim_after, status=in_progress, started (if not set)",
+      "6. Server writes lock file to projects/{projectId}/locks/{taskId}.lock",
+      "7. Agent sends PATCH /heartbeat every heartbeat_interval seconds to extend reclaim_after by 15 min",
+      "8. On completion: PATCH /tasks/:taskId with status=done clears all lock fields automatically",
+      "9. On failure: PATCH /tasks/:taskId with status=failed clears all lock fields automatically",
+      "10. On force-unlock: POST /tasks/:taskId/unlock resets to pending and removes lock file"
+    ],
+    "reclaimConditions": "If reclaim_after has passed and no heartbeat received, the lock is considered stale. AGENT_TASKMASTER may reclaim by calling /lock again.",
+    "lockFileLocation": "projects/{projectId}/locks/{taskId}.lock",
+    "lockFileSchema": "See models.LockFile"
+  },
+
+  "tierWorkflow": {
+    "description": "How tier progression works",
+    "advancement": [
+      "All tasks in tier N must have status 'done'",
+      "If approvedTier is set in tasks.json, that tier must be <= the completed tier before advancing",
+      "AGENT_TASKMASTER checks at the end of each task completion whether the tier is complete",
+      "On tier complete: broadcast tier:complete WebSocket event"
+    ],
+    "gates": "Gate tasks (gate field set) serve as approval checkpoints. AGENT_TASKMASTER enforces gate clearance before advancing.",
+    "pausing": "Set paused: true in tasks.json to pause the workflow. Server broadcasts workflow:paused event.",
+    "tiers": {
+      "0": "Discovery — spec review, requirements",
+      "1": "Strategy — planning, architecture decisions",
+      "2": "Architecture — system design, scaffolding",
+      "3": "Execution — implementation, building",
+      "4": "Delivery — testing, QA, deployment",
+      "5": "Final — sign-off, documentation, handoff"
+    }
+  }
+}

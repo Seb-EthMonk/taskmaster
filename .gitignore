@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+
+# Build output
+client/dist/
+server/dist/
+
+# Runtime data (generated, user-specific)
+server/data/energy.json
+server/data/port-registry.json
+
+# Logs
+logs/
+*.log
+
+# PM2
+.pm2/
+
+# Claude Code local config
+.claude/settings.json
+.claude/settings.local.json
+
+# Playwright
+.playwright-cli/
+.playwright/
+
+# OS
+.DS_Store
+Thumbs.db

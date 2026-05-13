@@ -1,0 +1,31 @@
+{
+  "name": "taskmaster",
+  "version": "2.0.0",
+  "description": "TaskMaster v2 - AI Agent Orchestration System",
+  "private": true,
+  "workspaces": [
+    "client",
+    "server",
+    "Runtimeproject"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "build:server": "npm run build -w server",
+    "build:client": "npm run build -w client",
+    "dev": "npm run build:runtime && npm run dev -w server & npm run dev -w client",
+    "start:tm": "concurrently --names \"server,mcp,client\" --prefix-colors \"cyan,yellow,green\" \"npm run dev -w server\" \"npm run mcp:dev -w server\" \"npm run dev -w client\"",
+    "start": "npm run start -w server"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@playwright/test": "^1.58.2"
+  },
+  "devDependencies": {
+    "autoprefixer": "^10.4.27",
+    "concurrently": "^9.2.1",
+    "postcss": "^8.5.8",
+    "tailwindcss": "^4.2.1"
+  }
+}

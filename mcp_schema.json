@@ -1,0 +1,815 @@
+{
+  "schema_version": "1.0.0",
+  "name": "taskmaster",
+  "description": "TaskMaster MCP Server - AI Agent Orchestration Platform",
+  "version": "3.0.0",
+  "transport": "stdio",
+  "server_info": {
+    "entry_point": "server/src/mcp-index.ts",
+    "dev_command": "cd server && npm run mcp:dev",
+    "prod_command": "cd server && npm run build && npm run mcp"
+  },
+  "tools": {
+    "projects": {
+      "description": "Project management tools",
+      "tools": [
+        {
+          "name": "list_projects",
+          "title": "List Projects",
+          "description": "Get all projects (active and archived) with their tasks and tier state",
+          "priority": 1,
+          "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+          },
+          "returns": {
+            "success": "boolean",
+            "count": "number",
+            "projects": "array of Project objects"
+          }
+        },
+        {
+          "name": "get_project",
+          "title": "Get Project",
+          "description": "Get a single project by ID with full task list and tier state",
+          "priority": 1,
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "projectId": {
+                "type": "string",
+                "description": "Project ID (folder name)"
+              }
+            },
+            "required": ["projectId"]
+          },
+          "returns": {
+            "success": "boolean",
+            "project": "Project object with tasks"
+          }
+        },
+        {
+          "name": "create_project",
+          "title": "Create Project",
+          "description": "Create a new project with initial tasks.json and project.md",
+          "priority": 1,
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Project ID (folder name, kebab-case)"
+              },
+              "name": {
+                "type": "string",
+                "description": "Display name for the project"
+              },
+              "description": {
+                "type": "string",
+                "description": "Optional project description"
+              },
+              "emoji": {
+                "type": "string",
+                "description": "Optional emoji for the project"
+              }
+            },
+            "required": ["id", "name"]
+          },
+          "returns": {
+            "success": "boolean",
+            "projectId": "string",
+            "project": "Project object"
+          }
+        }
+      ]
+    },
+    "tasks": {
+      "description": "Task management tools",
+      "tools": [
+        {
+          "name": "create_task",
+          "title": "Create Task",
+          "description": "Add a new task to a project",
+          "priority": 1,
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "projectId": {
+                "type": "string",
+                "description": "Project ID"
+              },
+              "title": {
+                "type": "string",
+                "description": "Task title"
+              },
+              "description": {
+                "type": "string",
+                "description": "Task description"
+              },
+              "tier": {
+                "type": "number",
+                "minimum": 0,
+                "description": "Tier number (0-5)"
+              },
+              "priority": {
+                "type": "string",
+                "enum": ["low", "medium", "high", "critical"],
+                "description": "Task priority"
+              },
+              "agent": {
+                "type": "string",
+                "description": "Assigned agent role"
+              },
+              "depends_on": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Array of task IDs this depends on"
+              },
+              "gate": {
+                "type": ["string", "null"],
+                "description": "Gate name (qa, security, review) or null"
+              },
+              "requires_human": {
+                "type": "boolean",
+                "description": "Whether this task requires human approval"
+              }
+            },
+            "required": ["projectId", "title", "tier"]
+          },
+          "returns": {
+            "success": "boolean",
+            "taskId": "string",
+            "task": "Task object"
+          }
+        },
+        {
+          "name": "get_task",
+          "title": "Get Task",
+          "description": "Get a single task by ID",
+          "priority": 1,
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "projectId": {
+                "type": "string",
+                "description": "Project ID"
+              },
+              "taskId": {
+                "type": "string",
+                "description": "Task ID (e.g., task-001)"
+              }
+            },
+            "required": ["projectId", "taskId"]
+          },
+          "returns": {
+            "success": "boolean",
+            "taskId": "string",
+            "projectId": "string",
+            "task": "Task object"
+          }
+        },
+        {
+          "name": "update_task",
+          "title": "Update Task",
+          "description": "Update a task — status, priority, title, description, or any writable field. Setting status to done or failed automatically clears the lock.",
+          "priority": 1,
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "projectId": {
+                "type": "string",
+                "description": "Project ID"
+              },
+              "taskId": {
+                "type": "string",
+                "description": "Task ID"
+              },
+              "status": {
+                "type": "string",
+                "enum": ["pending", "in_progress", "done", "blocked", "failed"],
+                "description": "Task status"
+              },
+              "priority": {
+                "type": "string",
+                "enum": ["low", "medium", "high", "critical"],
+                "description": "Task priority"
+              },
+              "title": {
+                "type": "string",
+                "description": "Task title"
+              },
+              "description": {
+                "type": "string",
+                "description": "Task description"
+              },
+              "agent": {
+                "type": "string",
+                "description": "Assigned agent"
+              },
+              "tier": {
+                "type": "number",
+                "minimum": 0,
+                "description": "Tier number"
+              },
+              "depends_on": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Task dependencies"
+              },
+              "gate": {
+                "type": ["string", "null"],
+                "description": "Gate name or null"
+              },
+              "requires_human": {
+                "type": "boolean",
+                "description": "Requires human approval"
+              },
+              "updated_by": {
+                "type": "string",
+                "description": "Agent/user making the update"
+              }
+            },
+            "required": ["projectId", "taskId"]
+          },
+          "returns": {
+            "success": "boolean",
+            "taskId": "string",
+            "projectId": "string",
+            "task": "Updated task object",
+            "changes": "array of change descriptions"
+          }
+        },
+        {
+          "name": "lock_task",
+          "title": "Lock Task",
+          "description": "Claim a task before working on it. Checks dependencies and human gates.",
+          "priority": 1,
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "projectId": {
+                "type": "string",
+                "description": "Project ID"
+              },
+              "taskId": {
+                "type": "string",
+                "description": "Task ID"
+              },
+              "agent": {
+                "type": "string",
+                "description": "Agent name claiming the task"
+              },
+              "reclaim_after_minutes": {
+                "type": "number",
+                "minimum": 1,
+                "description": "Lock duration in minutes (default: 15)"
+              }
+            },
+            "required": ["projectId", "taskId", "agent"]
+          },
+          "returns": {
+            "success": "boolean",
+            "taskId": "string",
+            "projectId": "string",
+            "task": "Task object with lock fields set"
+          }
+        },
+        {
+          "name": "task_heartbeat",
+          "title": "Task Heartbeat",
+          "description": "Extend lock while working on a task",
+          "priority": 1,
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "projectId": {
+                "type": "string",
+                "description": "Project ID"
+              },
+              "taskId": {
+                "type": "string",
+                "description": "Task ID"
+              },
+              "agent": {
+                "type": "string",
+                "description": "Agent name (must match lock holder)"
+              }
+            },
+            "required": ["projectId", "taskId", "agent"]
+          },
+          "returns": {
+            "success": "boolean",
+            "taskId": "string",
+            "projectId": "string",
+            "reclaim_after": "ISO timestamp"
+          }
+        },
+        {
+          "name": "unlock_task",
+          "title": "Unlock Task",
+          "description": "Force unlock a stuck task (recovery only). Resets status to pending.",
+          "priority": 1,
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "projectId": {
+                "type": "string",
+                "description": "Project ID"
+              },
+              "taskId": {
+                "type": "string",
+                "description": "Task ID"
+              }
+            },
+            "required": ["projectId", "taskId"]
+          },
+          "returns": {
+            "success": "boolean",
+            "taskId": "string",
+            "projectId": "string",
+            "message": "string"
+          }
+        }
+      ]
+    },
+    "system": {
+      "description": "System-level and workflow management tools",
+      "tools": [
+        {
+          "name": "get_project_logs",
+          "title": "Get Project Logs",
+          "description": "Read the activity log (agentlogs.md) from a project",
+          "priority": 1,
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "projectId": {
+                "type": "string",
+                "description": "Project ID"
+              },
+              "lines": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 1000,
+                "description": "Number of recent lines to return (default: 100)"
+              }
+            },
+            "required": ["projectId"]
+          },
+          "returns": {
+            "success": "boolean",
+            "projectId": "string",
+            "totalLines": "number",
+            "returnedLines": "number",
+            "logs": "array of log strings"
+          }
+        },
+        {
+          "name": "approve_tier",
+          "title": "Approve Tier",
+          "description": "Approve a completed tier and advance to the next tier",
+          "priority": 1,
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "projectId": {
+                "type": "string",
+                "description": "Project ID"
+              },
+              "tier": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 5,
+                "description": "Tier to approve (default: current tier)"
+              }
+            },
+            "required": ["projectId"]
+          },
+          "returns": {
+            "success": "boolean",
+            "projectId": "string",
+            "approvedTier": "number",
+            "currentTier": "number",
+            "status": "string",
+            "message": "string"
+          }
+        },
+        {
+          "name": "pause_workflow",
+          "title": "Pause Workflow",
+          "description": "Pause an active project to halt workflow progression",
+          "priority": 1,
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "projectId": {
+                "type": "string",
+                "description": "Project ID"
+              }
+            },
+            "required": ["projectId"]
+          },
+          "returns": {
+            "success": "boolean",
+            "projectId": "string",
+            "status": "string",
+            "message": "string"
+          }
+        },
+        {
+          "name": "resume_workflow",
+          "title": "Resume Workflow",
+          "description": "Resume a paused project",
+          "priority": 1,
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "projectId": {
+                "type": "string",
+                "description": "Project ID"
+              }
+            },
+            "required": ["projectId"]
+          },
+          "returns": {
+            "success": "boolean",
+            "projectId": "string",
+            "status": "string",
+            "message": "string"
+          }
+        },
+        {
+          "name": "health_check",
+          "title": "Health Check",
+          "description": "Check system health status",
+          "priority": 3,
+          "input_schema": {
+            "type": "object",
+            "properties": {}
+          },
+          "returns": {
+            "success": "boolean",
+            "status": "string",
+            "cache": "object with isHydrated, projectCount",
+            "timestamp": "ISO string"
+          }
+        },
+        {
+          "name": "get_tiers",
+          "title": "Get Tiers",
+          "description": "Get all tier definitions (0-5)",
+          "priority": 3,
+          "input_schema": {
+            "type": "object",
+            "properties": {}
+          },
+          "returns": {
+            "success": "boolean",
+            "tiers": "array of { number, name }"
+          }
+        },
+        {
+          "name": "get_locks",
+          "title": "Get Locks",
+          "description": "Get all locked tasks in a project",
+          "priority": 3,
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "projectId": {
+                "type": "string",
+                "description": "Project ID"
+              }
+            },
+            "required": ["projectId"]
+          },
+          "returns": {
+            "success": "boolean",
+            "projectId": "string",
+            "lockedCount": "number",
+            "lockedTasks": "array of lock info"
+          }
+        },
+        {
+          "name": "archive_project",
+          "title": "Archive Project",
+          "description": "Mark a project as archived (cache update only - use REST API for full archive)",
+          "priority": 3,
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "projectId": {
+                "type": "string",
+                "description": "Project ID"
+              }
+            },
+            "required": ["projectId"]
+          },
+          "returns": {
+            "success": "boolean",
+            "projectId": "string",
+            "status": "string",
+            "message": "string"
+          }
+        },
+        {
+          "name": "restore_project",
+          "title": "Restore Project",
+          "description": "Restore an archived project to active (cache update only - use REST API for full restore)",
+          "priority": 3,
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "projectId": {
+                "type": "string",
+                "description": "Project ID"
+              }
+            },
+            "required": ["projectId"]
+          },
+          "returns": {
+            "success": "boolean",
+            "projectId": "string",
+            "status": "string",
+            "message": "string"
+          }
+        }
+      ]
+    },
+    "agents": {
+      "description": "Agent management tools",
+      "tools": [
+        {
+          "name": "list_agents",
+          "title": "List Agents",
+          "description": "Get all available agent definitions from the agents/ directory",
+          "priority": 2,
+          "input_schema": {
+            "type": "object",
+            "properties": {}
+          },
+          "returns": {
+            "success": "boolean",
+            "count": "number",
+            "agents": "array of Agent objects"
+          }
+        },
+        {
+          "name": "get_agent",
+          "title": "Get Agent",
+          "description": "Get details for a specific agent by ID",
+          "priority": 2,
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "agentId": {
+                "type": "string",
+                "description": "Agent ID (e.g., coder, artist, qa)"
+              }
+            },
+            "required": ["agentId"]
+          },
+          "returns": {
+            "success": "boolean",
+            "agent": "Agent object"
+          }
+        },
+        {
+          "name": "list_expansions",
+          "title": "List Expansions",
+          "description": "Get all available agent expansions",
+          "priority": 2,
+          "input_schema": {
+            "type": "object",
+            "properties": {}
+          },
+          "returns": {
+            "success": "boolean",
+            "count": "number",
+            "expansions": "array of Expansion objects"
+          }
+        },
+        {
+          "name": "spawn_agent",
+          "title": "Spawn Agent",
+          "description": "Get instructions for spawning an agent process. Note: Use REST API for actual spawning.",
+          "priority": 2,
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "agentId": {
+                "type": "string",
+                "description": "Agent ID to spawn"
+              },
+              "projectPath": {
+                "type": "string",
+                "description": "Path to project directory"
+              },
+              "taskId": {
+                "type": "string",
+                "description": "Task ID to work on"
+              },
+              "projectId": {
+                "type": "string",
+                "description": "Project ID"
+              },
+              "expansions": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Expansion IDs to activate"
+              }
+            },
+            "required": ["agentId"]
+          },
+          "returns": {
+            "success": "boolean",
+            "message": "string",
+            "restEndpoint": "string",
+            "restMethod": "string",
+            "restBody": "object"
+          }
+        },
+        {
+          "name": "get_running_agents",
+          "title": "Get Running Agents",
+          "description": "Get list of currently running agent processes. Note: Use REST API for actual status.",
+          "priority": 2,
+          "input_schema": {
+            "type": "object",
+            "properties": {}
+          },
+          "returns": {
+            "success": "boolean",
+            "message": "string",
+            "restEndpoint": "string",
+            "restMethod": "string"
+          }
+        },
+        {
+          "name": "terminate_agent",
+          "title": "Terminate Agent",
+          "description": "Terminate a running agent process. Note: Use REST API for actual termination.",
+          "priority": 2,
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "pid": {
+                "type": "number",
+                "description": "Process ID of the agent to terminate"
+              }
+            },
+            "required": ["pid"]
+          },
+          "returns": {
+            "success": "boolean",
+            "message": "string",
+            "restEndpoint": "string",
+            "restMethod": "string",
+            "pid": "number"
+          }
+        }
+      ]
+    },
+    "llm": {
+      "description": "External LLM delegation tools",
+      "tools": [
+        {
+          "name": "call_llm",
+          "title": "Call External LLM",
+          "description": "Call an external LLM provider via OpenAI-compatible API. Use to delegate subtasks to cheaper or faster models — research synthesis, ingestion, coding. Pass files[] to have the server read and inline file contents before sending. Resolve the provider ID from modelDefaults in GET /api/settings: use modelDefaults.research for research tasks, modelDefaults.ingestion for ingestion tasks, modelDefaults.coding for code generation tasks.",
+          "priority": 2,
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string",
+                "description": "Provider ID from user settings (e.g. from modelDefaults.research, modelDefaults.coding, modelDefaults.ingestion). Fetch available IDs via GET /api/settings."
+              },
+              "prompt": {
+                "type": "string",
+                "description": "The task or question for the model"
+              },
+              "system": {
+                "type": "string",
+                "description": "Optional system prompt override"
+              },
+              "files": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Absolute file paths — server reads and inlines content into the prompt before sending"
+              }
+            },
+            "required": ["provider", "prompt"]
+          },
+          "returns": {
+            "content": "array of { type: 'text', text: string } — the model's response"
+          }
+        }
+      ]
+    },
+    "logs": {
+      "description": "Log access tools",
+      "tools": [
+        {
+          "name": "get_logs",
+          "title": "Get System Logs",
+          "description": "Get system-wide logs (if available). For project-specific logs, use get_project_logs.",
+          "priority": 3,
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["system", "error", "access"],
+                "description": "Log type to retrieve"
+              },
+              "lines": {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 1000,
+                "description": "Number of recent lines (default: 50)"
+              }
+            }
+          },
+          "returns": {
+            "success": "boolean",
+            "message": "string",
+            "pm2Commands": "object",
+            "type": "string",
+            "requestedLines": "number"
+          }
+        }
+      ]
+    }
+  },
+  "types": {
+    "Project": {
+      "id": "string",
+      "name": "string",
+      "description": "string",
+      "path": "string",
+      "currentTier": "number (0-5)",
+      "status": "'active' | 'completed' | 'archived' | 'awaiting_approval' | 'paused'",
+      "created": "ISO timestamp",
+      "lastAccessed": "ISO timestamp",
+      "tasks": "array of Task",
+      "metadata": "ProjectMetadata",
+      "completedTiers": "array of numbers"
+    },
+    "Task": {
+      "id": "string (e.g., task-001)",
+      "title": "string",
+      "description": "string",
+      "status": "'pending' | 'in_progress' | 'done' | 'blocked' | 'failed'",
+      "priority": "'low' | 'medium' | 'high' | 'critical'",
+      "tier": "number (0-5)",
+      "agent": "string (optional)",
+      "created": "ISO timestamp",
+      "started": "ISO timestamp (optional)",
+      "completed": "ISO timestamp (optional)",
+      "locked_by": "string or null",
+      "locked_at": "ISO timestamp or null",
+      "reclaim_after": "ISO timestamp or null",
+      "heartbeat_interval": "number (seconds)",
+      "gate": "string or null",
+      "depends_on": "array of task IDs",
+      "requires_human": "boolean",
+      "last_updated_by": "string or null",
+      "last_updated_at": "ISO timestamp"
+    },
+    "Agent": {
+      "id": "string",
+      "name": "string",
+      "description": "string",
+      "tools": "array of strings",
+      "availableExpansions": "array of strings",
+      "allExpansions": "array of strings",
+      "allSkills": "array of strings"
+    }
+  },
+  "tiers": [
+    { "number": 0, "name": "Discovery" },
+    { "number": 1, "name": "Strategy" },
+    { "number": 2, "name": "Architecture" },
+    { "number": 3, "name": "Execution" },
+    { "number": 4, "name": "Delivery" },
+    { "number": 5, "name": "Final" }
+  ],
+  "usage": {
+    "workflow": [
+      "1. Use list_projects to see available projects",
+      "2. Use get_project to view a specific project with its tasks",
+      "3. Use lock_task to claim a task before working on it",
+      "4. Use task_heartbeat every 25s to keep the lock alive while working",
+      "5. Use update_task with status: 'done' to complete the task",
+      "6. Use approve_tier when all tasks in a tier are done"
+    ],
+    "notes": [
+      "All writes go through cache to disk via file watcher",
+      "WebSocket events notify the Vue client of changes",
+      "Lock fields are automatically cleared when status is set to 'done' or 'failed'",
+      "Tasks with requires_human: true cannot be locked until human gate is cleared"
+    ]
+  }
+}

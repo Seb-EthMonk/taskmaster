@@ -1,0 +1,9 @@
+{
+  "server": "http://localhost:3000",
+  "heartbeat_interval": 30,
+  "loop_settings": {
+    "mode": "tier",
+    "on_failure": "stop",
+    "on_human_required": "skip_and_continue"
+  }
+}
