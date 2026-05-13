@@ -1,8 +1,10 @@
 # TaskMaster
 
-AI agent orchestration for software projects. Structured tasks, tiered execution, real-time dashboard.
+AI agent orchestration for software projects. Structured tasks, tiered execution, with a real-time dashboard.
 
 ---
+
+![Taskmaster Screenshot](https://github.com/Seb-EthMonk/taskmaster/blob/main/screenshot.png)
 
 ## What It Does
 
