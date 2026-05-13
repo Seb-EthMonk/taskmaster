@@ -38,6 +38,19 @@ The project folder is the source of truth. The AI is just the worker.
 
 ## Quick Start
 
+Clone the repo and enter the folder:
+
+```bash
+git clone https://github.com/Seb-EthMonk/taskmaster.git
+cd taskmaster
+```
+
+Then install dependencies:
+
+```bash
+npm install
+```
+
 From the TaskMaster root directory:
 
 ```bash
